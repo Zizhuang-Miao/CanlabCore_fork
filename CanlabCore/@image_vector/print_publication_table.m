@@ -29,7 +29,7 @@ function [outputT_pos, outputT_neg] = print_publication_table(image_vec, varargi
 %    **'atlas'**:
 %        Followed by a char array with the keyword or name of an 
 %        atlas-class object with labels.
-%        If not provided, default to 'canlab2023'
+%        If not provided, default to 'canlab2024'
 %
 %    **'doneg'**:
 %        Return both tables with positive activations and tables with 
@@ -139,18 +139,17 @@ atlas_net = atlas_thr.downsample_parcellation('labels_5');
 
 % parcellate image_vec into (positve and negative) regions
 if ~isa(image_vec, 'region')
+    % check whether the space of the regions and atlas match
+    if any(image_vec.volInfo.dim ~= atlas_thr.volInfo.dim) || ...
+            any(any(image_vec.volInfo.mat ~= atlas_thr.volInfo.mat))
+        warning(['The space of the image vector does not match that of the atlas. ' ...
+            'This can result in false positives in output tables. ' ...
+            'We recommend resampling the image to the atlas ' ...
+            'space as early as possible, not at this stage.']);
+    end
     regions = region(image_vec);
 else
     regions = image_vec;
-end
-
-% check whether the space of the regions and atlas match
-if any(regions.volInfo.dim ~= atlas_thr.volInfo.dim) || ...
-        any(regionsvolInfo.mat ~= atlas_thr.volInfo.mat)
-    warning(['The space of the image vector does not match that of the atlas. ' ...
-        'This can result in false positives in output tables. ' ...
-        'We recommend resampling the image to the atlas ' ...
-        'space as early as possible, not at this stage.']);
 end
 
 r = cell(1, 2);    % a cell object that stores positive and negative regions
