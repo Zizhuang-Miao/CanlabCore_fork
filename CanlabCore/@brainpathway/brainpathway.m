@@ -129,11 +129,111 @@
 % For loading images in different spaces together in one object, use the 'sample2mask' option.
 %
 %
-% Key properties and methods (a partial list; type doc fmri_data for more):
+% Key properties (a partial list; type doc brainpathway for more):
 % -------------------------------------------------------------------------
-% brainpathway Properties (a partial list; type doc brainpathway for more):
-%   xxx                     - xxxxxxxx
 %
+% :Properties:
+%
+% "518" in the list below reflects the number of regions in the CANlab2024
+% atlas. This number will vary by atlas. "150" reflects the number of
+% images in the time series, which will also vary by input data.
+%
+%   **region_atlas:** [1×1 atlas]
+%        An atlas object that defines the brain parcellation. This property contains
+%        the region definitions and associated labels that are used to segment the brain.
+%
+%   **voxel_dat:** [242872×150 (number of time points) double]
+%        A matrix of voxel-level data. Each row represents a voxel in the brain, and each
+%        column represents a time point or measurement. 
+%        This is typically preprocessed 4-D image data.
+%
+%   **node_dat:** [150×518 double]
+%        A matrix representing the aggregated signal from groups of voxels (nodes). Each row
+%        corresponds to a different time point, and each column corresponds to a node derived
+%        from the atlas regions. Nodes can be identical to regions, but you
+%        can also have a region with multiple nodes within it, each
+%        represented by a multivariate pattern across the region's voxels.
+%
+%   **region_dat:** [150×518 single]
+%        A matrix of region-level data, derived by averaging the node-level
+%        data within each region defined by the atlas.
+%
+%   **network_dat:** []
+%        Data related to network-level analyses (e.g., connectivity or clustering of regions);
+%
+%   **partition_dat:** []
+%        Data representing the partitioning of brain regions into networks or clusters; used for
+%        further subdivision or grouping analyses.
+%
+%   **node_weights:** {1×518 cell}
+%        A cell array where each cell contains the weights (e.g., regression coefficients)
+%        corresponding to each node. These weights may be derived from subsequent analyses.
+%
+%   **node_labels:** {1×518 cell}
+%        A cell array of strings containing the labels (names) of each node in the atlas.
+%
+%   **node_clusters:** [1×0 int32]
+%        An array of cluster assignments for the nodes. This is empty if clustering has not
+%        yet been performed. You can attach custom cluster assignments and
+%        labels.
+%
+%   **node_cluster_labels:** {1×0 cell}
+%        A cell array of strings for the cluster labels corresponding to each node cluster.
+%
+%   **region_indx_for_nodes:** [1×518 int32]
+%        A numeric vector mapping each node to its corresponding region index in the atlas.
+%
+%   **connectivity:** [1×1 struct]
+%        A structure containing connectivity information. It includes substructures such as:
+%           - **regions:** A structure with fields:
+%                 - **r:** A matrix (e.g., 518×518 single) of connectivity values (e.g., correlation coefficients)
+%                   between regions.
+%                 - **p:** A matrix (e.g., 518×518 single) of corresponding p-values.
+%           - **nodes:** Connectivity information at the node level.
+%
+%   **graphstruct:** [1×1 struct]
+%        A structure containing graph-theoretic metrics derived from the connectivity data.
+%        Its fields include:
+%           - **within_network_degree:** Measures of connectivity within each network.
+%           - **between_network_degree:** Measures of connectivity between networks.
+%
+%   **graph_properties:** [1×1 struct]
+%        A structure summarizing graph properties, including:
+%           - **regions:** A table summarizing region-level graph metrics.
+%           - **nodes:** A table summarizing node-level graph metrics.
+%
+%   **connectivity_properties:** [1×1 struct]
+%        A structure containing parameters and settings used in connectivity analysis.
+%        It includes:
+%           - **c_fun_han:** A function handle for computing connectivity (e.g., @corr).
+%           - **c_fun_arguments:** A cell array of additional arguments passed to the connectivity function.
+%        Changing these will trigger re-calculation of the connectome.
+%
+%   **connections_apriori:** []
+%        Predefined or a priori connectivity information; may be empty if not used.
+%        [1/0] logical matrices specifying existing connections, k x k x n for n networks
+%
+%   **additional_info:** [0×0 struct]
+%        A structure for storing any extra metadata or notes about the brainpathway object.
+%
+%   **listeners:** [1×9 event.proplistener]
+%        An array of event listeners attached to the object. These listeners are used to
+%        automatically trigger updates (e.g., recalculating connectivity) when certain properties change.
+%
+%   **verbose:** 1
+%        A flag indicating whether verbose output is enabled (1 = true, 0 = false).
+%
+%   **data_quality:** [1×1 struct]
+%        A structure containing quality metrics and assessments for the data, such as signal-to-noise
+%        ratios, motion artifacts, and other diagnostic measures.
+%           tSNR: Temporal signal to noise ratio for each region (1×518 single)
+%           tSTD: Temporal standard deviationfor each region (e.g., BOLD SD) (1×518 single)
+%           median_corr: NaN
+%
+% Key methods (a partial list; type doc brainpathway for more):
+% -------------------------------------------------------------------------
+%
+% :Properties:
 % fmri_data Methods (a partial list; type doc fmri_data for more):
 %   	xxx                 - xxxx
 %
@@ -400,9 +500,10 @@ classdef brainpathway < handle
             % When voxel_dat is set/updated, ...
             % ------------------------------------------------------------
             
-            % resample space if needed
+            % resample space if needed (this needs more work)
             % obj.listeners = addlistener(obj,'voxel_dat', 'PreSet',  @(src, evt) resample_space(obj, src, evt));
-            
+            % obj.listeners = addlistener(obj, 'voxel_dat', 'PreSet', @(src,evt) obj.attach_voxel_dat(img_obj, src, evt));
+
             % update region_dat
             obj.listeners = addlistener(obj,'voxel_dat', 'PostSet',  @(src, evt) obj.update_region_data(obj, src, evt));
 
@@ -464,7 +565,7 @@ classdef brainpathway < handle
             % Clusters regions based on obj.region_dat and updates
             % obj.node_clusters
             
-            n_clusters = max(8, num_regions(obj.region_atlas));
+            n_clusters = min(8, num_regions(obj.region_atlas));
             
             if length(varargin) > 0
                 n_clusters = varargin{1};
@@ -472,6 +573,11 @@ classdef brainpathway < handle
             
             obj.node_clusters = (clusterdata(obj.region_dat', 'linkage', 'ward', 'maxclust', n_clusters))';
             
+            if obj.verbose
+                fprintf('Clustered regions using ward linkage, max clusters = %3.0f\n', n_clusters)
+                fprintf('Idenfied %3.0f clusters and assigned integer labels to obj.node_clusters\n', length(unique(obj.node_clusters)))
+            end
+
         end
         
         
@@ -589,13 +695,15 @@ classdef brainpathway < handle
         
             input_args = varargin;
             
+            regions_only = any(strcmpi(input_args, 'regions'));
+
             S = struct('r', obj.connectivity.regions.r, 'p', obj.connectivity.regions.p, 'sig', obj.connectivity.regions.p < 0.05);
             
             Xlabels = format_strings_for_legend(obj.region_atlas.labels);
                     
             figtitle = 'brainpathway_connectivity_view';
             
-            if isempty(obj.connectivity.nodes)
+            if regions_only || isempty(obj.connectivity.nodes)
                 create_figure(figtitle);
             else
                 create_figure(figtitle, 1, 2);
@@ -626,7 +734,7 @@ classdef brainpathway < handle
             
             title('Region connectivity')
             
-            if isempty(obj.connectivity.nodes) || isempty(obj.connectivity.nodes.r)
+            if regions_only || isempty(obj.connectivity.nodes) || isempty(obj.connectivity.nodes.r)
                 return
             end
             

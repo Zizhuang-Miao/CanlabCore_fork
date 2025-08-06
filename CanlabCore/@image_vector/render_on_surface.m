@@ -92,27 +92,32 @@ function [cm, colorbar1_han, colorbar2_han] = render_on_surface(obj, surface_han
 %       target surface is performed according to the MNIsurf procedure described in Wu, Ngo, Greve et al. (2018)
 %       Neuroimage. This is something you absolutely want to do if your sourcespace and targetsurface are
 %       supported.
-%       Supported sourcespaces = {'MNI152NLin2009cAsym','MNI152NLin6Asym','colin27'}
+%       Supported sourcespaces = {'colin27', 'MNI152NLin2009cAsym','MNI152NLin6Asym'}
+%
+%       colin27 is an individual person's brain (Colin's) scanned on 27 occasions.
+%       MNI152NLin6Asym is the template used in SPM and FSL software for years, the default from the early 2000s through 2025.
+%       MNI152NLin2009cAsym is a higher-resolution template that is generally preferred to the 152NLin6.
 %
 %    **'srcdepth':**
-% 	Requires 'sourcespace' specification, and allows further specify desired surface depth to sample volume 
-%       at. Typical options might be 'pial', 'white', or 'midthickness'. Requires that a file named 
-%       '<sourename>_<srcdepth>_lh.mat' and '<sourename>_<srcdepth>_rh.mat' be in your matlab path. The pial surface 
-%       and even midthickness will undersample from deep sulci, but the white surface may conversely suffer from 
-%       partial volume effects if you've masked white matter out of your volumetric data. srcdepth can also be a cell 
-%       array, in which case multiple depths are sampled and averaged (for linear interpolation) or the mode is taken 
-%       (for nearest neighbor interpolation). If there is a modal tie, the default is to use whichever belongs first 
-%       in your srcdepth list. Default: {'midthickness','pial','white'}, i.e. midthickness > pial > white for modal 
+% 	Requires 'sourcespace' specification, and allows further specify desired surface depth to sample volume
+%       at. Typical options might be 'pial', 'white', or 'midthickness'. Requires that a file named
+%       '<sourename>_<srcdepth>_lh.mat' and '<sourename>_<srcdepth>_rh.mat' be in your matlab path. The pial surface
+%       and even midthickness will undersample from deep sulci, but the white surface may conversely suffer from
+%       partial volume effects if you've masked white matter out of your volumetric data. srcdepth can also be a cell
+%       array, in which case multiple depths are sampled and averaged (for linear interpolation) or the mode is taken
+%       (for nearest neighbor interpolation). If there is a modal tie, the default is to use whichever belongs first
+%       in your srcdepth list. Default: {'midthickness','pial','white'}, i.e. midthickness > pial > white for modal
 %       tie breaks.
 %
 %    **'targetsurface':**
-%       If specified together with a targetsurface then nonlinear mapping between the source volume and the 
+%       If specified together with a targetsurface then nonlinear mapping between the source volume and the
 %       target surface is performed according to the MNIsurf procedure described in Wu, Ngo, Greve et al. (2018)
 %       Neuroimage. This is something you absolutely want to do if your sourcespace and targetsurface are
 %       supported.
 %       Supported targetsurface = {'fsLR_32k', 'fsaverage_164k'}
 %
-%   
+%       fsaverage_164k is a high-resolution surface template created from surfaces aligned to freesurfer
+%       fsLR_32k is a standard-resolution cortical surface template created from surfaces aligned to freesurfer. This is generally used by the Human Connectome Project (HCP)
 %
 % :Outputs:
 %
@@ -310,7 +315,14 @@ end
 % Deal with possibility of multiple images in object
 % Exclude zeros
 
-[datvec, clim] = get_data_range(obj, clim);
+% Bugfix: Fix edge case when there is no or sparse data in surf_vert_val -
+% MS 11/5/2024
+
+if ~isempty(clim)
+    [datvec, clim] = get_data_range(obj, clim);
+else
+    [datvec, clim] = get_data_range(obj, [min(obj.dat), max(obj.dat)]);
+end
 
 % -------------------------------------------------------------------------
 % Define colormap
@@ -530,9 +542,13 @@ for i = 1:length(surface_handles)
     % interpolate from mesh grid to the surface vertices intersecting
     % the grid
     if isempty(sourcespace) | isempty(targetsurface)
+        sh = surface_handles(i);
+        if isa(sh,'double')
+            sh = get(sh);
+        end
         c = interp3(mesh_struct.X, mesh_struct.Y, mesh_struct.Z, mesh_struct.voldata, ...
-            surface_handles(i).Vertices(:,1), surface_handles(i).Vertices(:,2), surface_handles(i).Vertices(:,3), interp);
-    else
+            sh.Vertices(:,1), sh.Vertices(:,2), sh.Vertices(:,3), interp);
+    else 
         % figure out what surface we're dealing with and grab the appropriate
         % source surfaces to sample with
         if contains(get(surface_handles(i),'Tag'),{'left','Left','LEFT'})
@@ -542,7 +558,8 @@ for i = 1:length(surface_handles)
             % this is used to pull the correct mappings to the target surface 
             % from our reg struct
             vertices = 'vertices_lh';
-            weights = 'weights_rh';
+            weights = 'weights_lh';
+
         elseif contains(get(surface_handles(i),'Tag'),{'right','Right','RIGHT'})
             % this is used for mesh interpolation from the volume
             src_sp = src_sp_rh;
@@ -573,6 +590,7 @@ for i = 1:length(surface_handles)
         else
             % if target vertices and surface vertices match proceed
             % with MNIsurf vol2surf method
+            
             c_mesh = zeros(size(src_sp{1}.vertices,1), length(src_sp));
             for j = 1:length(src_sp)
                 c_mesh(:,j) = interp3(mesh_struct.X, mesh_struct.Y, mesh_struct.Z, mesh_struct.voldata, ...
@@ -607,17 +625,36 @@ for i = 1:length(surface_handles)
         
         c_colored = c;
     
-    
-        whpos = c > 0;
-        %     kpos = 61;   % which block of 256 colors; depends on colormap
-        cpos = map_function(c(whpos), prctile(datvec(datvec>0),1), clim(2), (kpos-1)*nvals+1, kpos*nvals); % map into indices in hot cm range of colormap
-        c_colored(whpos) = cpos;
-        
-        whneg = c < 0;
-        %     kneg = 55;   % which block of 256 colors
-        % NOTE: *** THIS IS NOT WORKING WELL IN SOME CASES -- TAKES c and converts to cneg = all Inf in a problematic example case 
-        cneg = map_function(c(whneg), clim(1), prctile(datvec(datvec<0),99), (kneg-1)*nvals+1, kneg*nvals); % map into indices in cool cm range of colormap
-        c_colored(whneg) = cneg;
+        if diff(sign(clim))
+            whpos = c > 0;
+            %     kpos = 61;   % which block of 256 colors; depends on colormap
+            if custom_colormap
+                cpos = map_function(c(whpos), 0, clim(2), (kpos-0.5)*nvals+1, kpos*nvals); % map into indices in hot cm range of colormap
+            else
+                cpos = map_function(c(whpos), 0, clim(2), (kpos-1)*nvals+1, kpos*nvals); % map into indices in hot cm range of colormap
+            end
+            c_colored(whpos) = cpos;
+            
+            whneg = c < 0;
+            %     kneg = 55;   % which block of 256 colors
+            if custom_colormap
+                cneg = map_function(c(whneg), clim(1), 0, (kneg-1)*nvals+1, (kneg-0.5)*nvals); % map into indices in cool cm range of colormap
+            else
+                cneg = map_function(c(whneg), clim(1), 0, (kneg-1)*nvals+1, (kneg)*nvals); % map into indices in cool cm range of colormap
+            end
+            c_colored(whneg) = cneg;
+        else
+            whpos = c > 0;
+            %     kpos = 61;   % which block of 256 colors; depends on colormap
+            cpos = map_function(c(whpos), prctile(datvec(datvec>0),1), clim(2), (kpos-1)*nvals+1, kpos*nvals); % map into indices in hot cm range of colormap
+            c_colored(whpos) = cpos;
+            
+            whneg = c < 0;
+            %     kneg = 55;   % which block of 256 colors
+            % NOTE: *** THIS IS NOT WORKING WELL IN SOME CASES -- TAKES c and converts to cneg = all Inf in a problematic example case 
+            cneg = map_function(c(whneg), clim(1), prctile(datvec(datvec<0),99), (kneg-1)*nvals+1, kneg*nvals); % map into indices in cool cm range of colormap
+            c_colored(whneg) = cneg;
+        end
     end
             
     wh = c == 0 | isnan(c);                    % save these to replace with gray-scale later
@@ -721,13 +758,21 @@ if ~dolegend, return, end
 
 if any(datvec > 0)
     
+    % check for existing colorbars
+    children = get(gcf,'Children');
+    for i = 1:length(children)
+        if isa(children(i),'matlab.graphics.illustration.ColorBar')
+            delete(children(i));
+        end
+    end
+
     bar1axis = axes('Position', [.55 .55 .38 .4]);
     if doindexmap
         colormap(bar1axis, cm(2:end,:));
     else
         colormap(bar1axis, cm(1+(kpos-1)*nvals:kpos*nvals, :));
     end
-    colorbar1_han = colorbar(bar1axis);
+    colorbar1_han = colorbar(bar1axis, 'EastOutside');
     set(bar1axis, 'Visible', 'off');
     
     if doindexmap & exist('mylabels', 'var')
@@ -766,7 +811,7 @@ if any(datvec < 0)
     else
         colormap(bar2axis, cm(1+(kneg-1)*nvals:kneg*nvals, :));
     end
-    colorbar2_han = colorbar(bar2axis);
+    colorbar2_han = colorbar(bar2axis, 'EastOutside');
     set(bar2axis, 'Visible', 'off');
     
     if doindexmap
@@ -808,7 +853,7 @@ function val = map_function(c,x1,x2,y1,y2)
         % softmax here keeps negative values from extending below the colormap
         % range, which would otherwise make those values gray, since the lowest
         % value on the colormap is a hardcoded grayscale value
-        range_val = max((c-x1),0)*(y2-y1)./(x2-x1);
+        range_val = min(max((c-x1),0),x2-x1)*(y2-y1)./(x2-x1);
     end
 
     val = y1 + range_val;

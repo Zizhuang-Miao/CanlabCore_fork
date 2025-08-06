@@ -1,4 +1,6 @@
 function [sig, pthr] = holm_sidak(pVector, alpha)
+% [sig, pthr] = holm_sidak(pVector, alpha)
+%
 % performs Holm-Sidak correction for multiple independent comparisons. Sidak correction is a slightly less conservative bonferonni
 % Holm's method is a step down approach implemented by the while loop iterations. More commonly used in the context of bonferonni
 % rather than Sidak, but equally valid in both cases.
@@ -28,13 +30,13 @@ function [sig, pthr] = holm_sidak(pVector, alpha)
 
 [sortedP, argsort] = sort(pVector, 'descend'); % pValues sorted from largest to smallest, and indices mapping pVector to sortedP
 
-sig = zeros(length(sortedP),1);
+sig = false(length(sortedP),1);
 
 pthr = 1 - (1-alpha)^(1/length(sortedP)); % max P-value for sig results. Anything below this is signficant.
 
 while sortedP(end) < 1 - (1-alpha)^(1/length(sortedP))
 
-    sig(argsort(end)) = 1;
+    sig(argsort(end)) = true;
     sortedP(end) = [];
     argsort(end) = [];
 

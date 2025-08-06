@@ -7,22 +7,29 @@ function [stats, hh, hhfill, table_group, multcomp_group] = image_similarity_plo
 %
 %    [stats, hh, hhfill, table_group, multcomp_group] = image_similarity_plot(obj, 'average');
 %
-% This is a method for an image_vector object that compares the spatial
+% - This is a method for an image_vector object that compares the spatial
 % similarity of input image(s) to a specified set of a priori spatial basis maps.
-% It returns similarity values (Pearson's r) to each a priori basis map,
-% and a plot that shows these values.  If multiple images are entered, the
-% 'average' function can return a plot with standard error bars and
-% statistics on the significance of the correlation with each basis map
+% It returns similarity values (Pearson's r by default) to each a priori basis map,
+% and a plot that shows these values.  
+% - If multiple images are entered, the 'average' function can return a plot with 
+% standard error bars and statistics on the significance of the correlation with each basis map
 % (across input images) and the differences (inhomogeneity) in similarity across basis
-% maps.  If a grouping variable is entered, statistics are calculated for
+% maps.  
+% - If a grouping variable is entered, statistics are calculated for
 % multivariate differences across the groups of input images. Such
 % differences are assessed treating the basis maps as variables and input
-% images as cases.  The basis sets are "NPSplus" (the default), which
-% includes the NPS map from Wager et al. 2013, Romantic Rejection
+% images as cases.  
+% - There are many basis map sets ("mapset" in code) that can be specified by keyword.
+% e.g., "NPSplus" includes the NPS map from Wager et al. 2013, Romantic Rejection
 % classifier (Woo 2015), Negative emotion map (Chang 2015), and vicarious
 % pain (Krishnan et al. 2016).  Other sets are "bucknerlab" including 7 cortical [only]
 % networks from the Buckner Lab's 1000-person resting-state analyses and
 % "kragelemotion", including 7 emotion-predictive maps from Kragel 2015.
+% - Be thoughtful about how your code is treating zero-valued voxels, which
+% are typically missing data in brain images. The main calculations here
+% are done by canlab_pattern_similarity.m, which treats zeros as missing in
+% data images but not pattern basis maps (which can be binary or other
+% 'signatures'. See "help canlab_pattern_similarity".  
 %
 % ..
 %     Author and copyright information:
@@ -286,7 +293,7 @@ sim_metric = 'corr'; % default: correlation
 % doCosine = 0; %do cosine similarity
 plotstyle = 'wedge'; % or 'polar'
 bicolor = false;
-treat_zero_as_data=0; % Treat zero value as missing data.
+treat_zero_as_data = 0; % Default of 0 means treat zero value as missing data.
 Error_STD=0;
 
 
@@ -383,7 +390,7 @@ end
 
 if doaverage && strcmp(plotstyle, 'polar') && ~any(strcmp(varargin, 'colors'))
    if exist('group', 'var')
-    groupColors = scn_standard_colors(length(unique(group)))';
+    groupColors = scn_standard_colors(length(unique(group, 'stable')))';
    else
     groupColors = {[1 0 0]};  % unicolor. can change line and err with 2nd color entry.
    end
@@ -406,6 +413,10 @@ if any(wh)
     if iscolumn(networknames), networknames = networknames'; end
 end
 
+% Make sure they are not in table format
+if istable(networknames)
+    networknames = table2array(networknames);
+end
 
 
 % Deal with space and empty voxels so they line up
@@ -469,7 +480,7 @@ switch sim_metric
             % r(im, :) = corr_matrix(double(mask.dat(:,im)), double(obj.dat));
             
             if treat_zero_as_data==1
-                r(im, :) = canlab_pattern_similarity(obj.dat, mask.dat(:, im), 'correlation','treat_zero_as_data');
+                r(im, :) = canlab_pattern_similarity(obj.dat, mask.dat(:, im), 'correlation', 'treat_zero_as_data');
             else  
                 r(im, :) = canlab_pattern_similarity(obj.dat, mask.dat(:, im), 'correlation');
             end
@@ -542,7 +553,7 @@ if ~doaverage
                     [hh, hhfill] = tor_polar_plot({r}, groupColors, {networknames}, 'nonneg','fixedrange',fixedrange);
                     % Make legend
                     if ~isempty(obj.image_names)
-                        han = makelegend(obj.image_names, groupColors);
+                        han = makelegend(obj.image_names, groupColors, 'nofig', 1);
                     end
                 end
                 
@@ -577,7 +588,7 @@ elseif doaverage
     
     if exist('compareGroups','var') %if we want to do analysis for multiple groups
         
-        groupValues=unique(group);
+        groupValues=unique(group, 'stable');
         g=num2cell(groupValues); %create cell array of group numbers
           
         for i=1:size(z,2) %for each spatial basis do an anova across groups
@@ -625,7 +636,7 @@ elseif doaverage
           
     else
         group=ones(size(r,2),1); %otherwise all data is from same group
-        groupValues=unique(group);
+        groupValues=unique(group, 'stable');
         g=num2cell(groupValues); %creat cell array of group numbers
         
         
@@ -690,8 +701,10 @@ elseif doaverage
     % Plot (average + error bars)
     % ------------------------------------------------------------
     if ~noplot
-        groupColors = scn_standard_colors(length(groupValues))';
-        
+        if isempty(groupColors)
+            groupColors = scn_standard_colors(length(groupValues))';
+        end
+
         % removed to enable use of user-defined colors. SG 2017/2/7
         % gc=groupColors;
         % groupColors=repmat(groupColors',3,1);
@@ -699,11 +712,12 @@ elseif doaverage
         
         % removed and replaced to debug plotting code below
         % LVO 2023/12/18
-        gc = groupColors(1:size(groupValues,2));
+        % Bugfix to this MS 2024/9/11
+        gc = groupColors(1:numel(groupValues));
         gc_rep = repmat(gc',3,1);
         gc_toplot = gc_rep(:,1);
-        for c = 2:size(groupValues,2)
-            gc_toplot = [gc_toplot;gc_rep(:,2)];
+        for c = 2:numel(groupValues)
+            gc_toplot = [gc_toplot;gc_rep(:,c)];
         end
         
         toplot=[];
@@ -787,11 +801,11 @@ elseif doaverage
                                 end
                             end
                         end
-                        han = makelegend(names,groupColors(1:(g*2)));
+                        han = makelegend(names,groupColors(1:(g*2)), 'nofig', 1);
                         
                     else
                         [hh,hhfill] = tor_wedge_plot(r_group', networknames, 'outer_circle_radius', outercircleradius, 'colors', groupColors(1:2), 'nofigure', 'bicolor');
-                        han = makelegend({'positive' 'negative'},groupColors(1:2));
+                        han = makelegend({'positive' 'negative'},groupColors(1:2), 'nofig', 1);
                         
                     end
                         
@@ -813,9 +827,9 @@ elseif doaverage
                 % Make legend
                 if numel(groupValues)>1
                     if ~iscategorical(groupValues) && ~isstring(groupValues) % groupValues is a double
-                        han = makelegend(num2cell(string(groupValues)), gc);
+                        han = makelegend(num2cell(string(groupValues)), gc, 'nofig', 1);
                     else
-                        han = makelegend(cellstr(groupValues), gc);
+                        han = makelegend(cellstr(groupValues), gc, 'nofig', 1);
                     end
                 end
                 
