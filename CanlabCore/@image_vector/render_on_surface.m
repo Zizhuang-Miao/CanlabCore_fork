@@ -187,6 +187,25 @@ function [cm, colorbar1_han, colorbar2_han] = render_on_surface(obj, surface_han
 % revise surface() method to use this
 %
 % July 2024: Added 'labels' option for indexmap - Michael Sun PhD 07/29/2024
+%
+% August 2025, Zizhuang Miao
+%   1. Let custom_colormap also use the full range of colormap, instead of
+%   just half of it (where the codes are chaged: if diff(sign(clim))
+            % whpos = c > 0;
+            %     kpos = 61;   % which block of 256 colors; depends on colormap
+            % if custom_colormap)
+%   2. Add two keyword arguments 'pos_min' and 'neg_max', which determines
+%   the value that is plotted as the two ends of colormap (lowest positive
+%   value and highest negative value). Default to 0, where any vertices 
+%   whose value is not 0 are colored. If not 0, make colors for vertices
+%   with values larger than pos_min or lower than neg_max.
+%   3. Add another keyword argument 'graybuffer', which controls the number
+%   of gray values in the colormap if pos_colormap and neg_colormap are
+%   speicified.
+%   4. Add another keyword argument 'use_vertices_range', which controls
+%   the range of the colormap using vertices values instead of volumetric
+%   data values. Default to false.
+%   5. Change color bar limit to reflect the real color mapping.
 
 if any(~ishandle(surface_handles))
     error('Some surface_handles are not valid handles');
@@ -214,11 +233,18 @@ sourcespace = [];
 srcdepth = {'midthickness','pial','white'}; % default depth to sample a surface from
 targetsurface = [];
 interp = 'linear';
+pos_min = 0;
+neg_max = 0; 
+graybuffer = 20;  % for border in hotcool_split colormap - fade to gray in lowest k values, default to 20
+use_vertices_range = false;
 
 allowable_sourcespace = {'colin27','MNI152NLin6Asym','MNI152NLin2009cAsym'};
 allowable_targetsurface = {'fsaverage_164k','fsLR_32k'};
 
-allowable_keyword_value_pairs = {'clim' 'color' 'colormap' 'colormapname' 'axis_handle' 'pos_colormap' 'neg_colormap', 'sourcespace', 'targetsurface', 'srcdepth','interp'};
+allowable_keyword_value_pairs = {'clim', 'color', 'colormap', 'colormapname', ...
+    'axis_handle', 'pos_colormap', 'neg_colormap', 'sourcespace', ...
+    'targetsurface', 'srcdepth', 'interp', 'pos_min', 'neg_max', 'graybuffer', ...
+    'use_vertices_range'};
 
 
 % optional inputs with default values - each keyword entered will create a variable of the same name
@@ -281,6 +307,9 @@ for i = 1:length(varargin)
             case 'transcontrast'
                 k = varargin{i+1};
                 enhance_contrast = @(x1)(2*((1./(1+exp(-k.*x1)))-0.5));
+            
+            case 'use_vertices_range'
+                use_vertices_range = true;
 
             case allowable_keyword_value_pairs
                 
@@ -363,7 +392,7 @@ if ~isempty(pos_colormap) ||  ~isempty(neg_colormap)
     % Skip colormap generator, already
     % found the range of colors for pos/neg values to split around 0 here.
     % this sets the colormap for axis_handle
-    [cm, kpos, kneg] = hotcool_split_colormap(nvals, clim, axis_handle, pos_colormap(1, :), pos_colormap(end, :), neg_colormap(1, :), neg_colormap(end, :));
+    [cm, kpos, kneg] = hotcool_split_colormap(nvals, clim, axis_handle, graybuffer, pos_colormap(1, :), pos_colormap(end, :), neg_colormap(1, :), neg_colormap(end, :));
     
     % colormapname = [neg_colormap; pos_colormap];   % colormapname is either name or [nvals x 3] matrix
     % nvals = size(colormapname, 1);                 % needs to match for color and gray maps to work right
@@ -392,7 +421,7 @@ else
     elseif diff(sign(clim))
         
         % Default colormap for objects with - and + values
-        [cm, kpos, kneg] = hotcool_split_colormap(nvals, clim, axis_handle, splitcolors{:});
+        [cm, kpos, kneg] = hotcool_split_colormap(nvals, clim, axis_handle, graybuffer, splitcolors{:});
         
     else
         [cm, kpos, kneg] = split_colormap(nvals, colormapname, axis_handle);
@@ -624,24 +653,34 @@ for i = 1:length(surface_handles)
         %     whlow = abs(c) < border_percent | isnan(c);
         
         c_colored = c;
-    
+        
+        if use_vertices_range
+            % change the limits or range of the colormap to the range of
+            % projected vertex data
+            clim = [min(c) max(c)];
+        end
+
         if diff(sign(clim))
-            whpos = c > 0;
+            whpos = c > pos_min;
             %     kpos = 61;   % which block of 256 colors; depends on colormap
-            if custom_colormap
-                cpos = map_function(c(whpos), 0, clim(2), (kpos-0.5)*nvals+1, kpos*nvals); % map into indices in hot cm range of colormap
-            else
-                cpos = map_function(c(whpos), 0, clim(2), (kpos-1)*nvals+1, kpos*nvals); % map into indices in hot cm range of colormap
-            end
+            % if custom_colormap
+            %    cpos = map_function(c(whpos), 0, clim(2), (kpos-0.5)*nvals+1, kpos*nvals); % map into indices in hot cm range of colormap
+            % else
+            %    cpos = map_function(c(whpos), 0, clim(2), (kpos-1)*nvals+1, kpos*nvals); % map into indices in hot cm range of colormap
+            % end
+                     
+            cpos = map_function(c(whpos), pos_min, clim(2), (kpos-1)*nvals+1, kpos*nvals);
             c_colored(whpos) = cpos;
             
-            whneg = c < 0;
+            whneg = c < neg_max;
             %     kneg = 55;   % which block of 256 colors
-            if custom_colormap
-                cneg = map_function(c(whneg), clim(1), 0, (kneg-1)*nvals+1, (kneg-0.5)*nvals); % map into indices in cool cm range of colormap
-            else
-                cneg = map_function(c(whneg), clim(1), 0, (kneg-1)*nvals+1, (kneg)*nvals); % map into indices in cool cm range of colormap
-            end
+            % if custom_colormap
+            %     cneg = map_function(c(whneg), clim(1), 0, (kneg-1)*nvals+1, (kneg-0.5)*nvals); % map into indices in cool cm range of colormap
+            % else
+            %     cneg = map_function(c(whneg), clim(1), 0, (kneg-1)*nvals+1, (kneg)*nvals); % map into indices in cool cm range of colormap
+            % end
+            
+            cneg = map_function(c(whneg), clim(1), neg_max, (kneg-1)*nvals+1, (kneg)*nvals);
             c_colored(whneg) = cneg;
         else
             whpos = c > 0;
@@ -657,7 +696,7 @@ for i = 1:length(surface_handles)
         end
     end
             
-    wh = c == 0 | isnan(c);                    % save these to replace with gray-scale later
+    wh = (c <= pos_min & c >= neg_max) | isnan(c);                    % save these to replace with gray-scale later
     
     %c_colored = map_function(c);    % Map to colormap indices (nvals = starting range, nvals elements)
     
@@ -786,7 +825,7 @@ if any(datvec > 0)
         set(colorbar1_han, 'YLim', [0 1], 'YTick', y_positions, 'YTickLabel', mylabels, 'FontSize', 18);
 
     else
-        minpos = min(datvec(datvec > 0));
+        minpos = pos_min;
         ticklabels = [minpos clim(2)];
         ticklabels = arrayfun(@(x1)(x1), ticklabels, 'UniformOutput', false); % make cell array
         for i = 1:length(ticklabels)
@@ -817,7 +856,7 @@ if any(datvec < 0)
     if doindexmap
         set(colorbar2_han, 'YTick', [0 1], 'YTickLabel', [], 'FontSize', 18);
     else
-        maxneg = max(datvec(datvec < 0));
+        maxneg = neg_max;
         ticklabels = [clim(1) maxneg];
         ticklabels = arrayfun(@(x1)(x1), ticklabels, 'UniformOutput', false); % make cell array
         for i = 1:length(ticklabels)
@@ -922,7 +961,7 @@ end % function
 % - If object is positive-valued or negative-valued only, assume we want a unipolar colormap
 
 
-function [cm, kpos, kneg] = hotcool_split_colormap(nvals, clim, axis_handle, varargin)
+function [cm, kpos, kneg] = hotcool_split_colormap(nvals, clim, axis_handle, graybuffer, varargin)
 %
 % cm = hotcool_split_colormap(nvals, clim, [lowhot hihot lowcool hicool]), each is [r g b] triplet
 %
@@ -941,8 +980,6 @@ hihot = [1 1 0]; % max pos, most extreme values
 lowhot = [1 .4 .5]; % [.8 .3 0]; % min pos
 hicool = [0 .8 .8]; % [.3 .6 .9]; % max neg
 lowcool = [0 0 1]; % min neg, most extreme values
-
-graybuffer = 20;  % for border - fade to gray in lowest k values
 
 if ~isempty(varargin)
     if length(varargin) < 4
